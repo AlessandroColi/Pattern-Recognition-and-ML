@@ -107,8 +107,9 @@ class HMM:
     def setStationary(self):
         pass
 
-    def logprob(self):
-        pass
+    def logprob(self, pX):
+        _, c = self.mc.forward(pX)
+        return -np.sum(np.log(c))
 
     def adaptStart(self):
         pass
