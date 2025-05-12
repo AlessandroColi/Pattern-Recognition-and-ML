@@ -19,7 +19,6 @@ class MarkovChain:
         self.q = initial_prob  #InitialProb(i)= P[S(1) = i]
         self.A = transition_prob #TransitionProb(i,j)= P[S(t)=j | S(t-1)=i]
 
-
         self.nStates = transition_prob.shape[0]
 
         self.is_finite = False
@@ -132,14 +131,57 @@ class MarkovChain:
     def initErgodic(self):
         pass
 
-    def forward(self):
-        pass
+    def forward(self, pX):
+        """
+        Scaled forward algorithm.
+        pX: sequence of observations, length T
+        returns: alpha_hat (nStates×T), c (T,) scale factors
+        """
+        N = self.nStates
+        T = len(pX)
+
+        alpha_hat = np.zeros((N, T))
+        c = np.zeros(T)
+
+        # t = 0 initialization
+        b0 = np.array([self.B[j].prob(pX[0]) for j in range(N)])
+        alpha_hat[:, 0] = self.q * b0
+        c[0] = 1.0 / alpha_hat[:, 0].sum()
+        alpha_hat[:, 0] *= c[0]
+
+        # recursion
+        for t in range(1, T):
+            bt = np.array([self.B[j].prob(pX[t]) for j in range(N)])
+            alpha_hat[:, t] = (alpha_hat[:, t-1] @ self.A) * bt
+            c[t] = 1.0 / alpha_hat[:, t].sum()
+            alpha_hat[:, t] *= c[t]
+
+        return alpha_hat, c
 
     def finiteDuration(self):
         pass
     
-    def backward(self):
-        pass
+    def backward(self, c, pX):
+        """
+        Scaled backward algorithm.
+        c: the scale factors returned by forward()
+        pX: same observation sequence
+        returns beta_hat (nStates×T)
+        """
+        N = self.nStates
+        T = len(pX)
+
+        beta_hat = np.zeros((N, T))
+
+        # initialize at t = T−1
+        beta_hat[:, T-1] = c[T-1]
+
+        # recursion backward
+        for t in range(T-2, -1, -1):
+            bt1 = np.array([self.B[j].prob(pX[t+1]) for j in range(N)])
+            beta_hat[:, t] = c[t] * (self.A * bt1).dot(beta_hat[:, t+1])
+
+        return beta_hat
 
     def adaptStart(self):
         pass
