@@ -1,6 +1,6 @@
 import os
-import argparse
 import pandas as pd
+from math import ceil
 
 def preprocess_accelerometer_data(input_file, output_file, window_size=5):
     try:
@@ -9,39 +9,74 @@ def preprocess_accelerometer_data(input_file, output_file, window_size=5):
             delimiter='\t',
             header=None,
             names=['timestamp', 'type', 'x', 'y', 'z'],
-            on_bad_lines='skip'
+            on_bad_lines='skip'  # Skip malformed lines
         )
     except pd.errors.ParserError as e:
         print(f"Error reading {input_file}: {e}")
         return
 
-    # Remove the 'type' column
     df = df.drop(columns=['type'])
 
-    # Apply moving average filter and round to 3 decimal places
     for col in ['x', 'y', 'z']:
         df[col] = df[col].rolling(window=window_size, min_periods=1, center=True).mean().round(3)
 
-    # Save the processed data
     df.to_csv(output_file, sep='\t', index=False, header=False)
 
+def process_all_data(base_path="Data", window_size=5):
+    '''
+        Preprocess the data using a simple moving average and round the values to 3 decimals to avoid overinterpretation.
+        It salso splits the data with a 80-20 ration between train and test files.
+        
+        It assumes a folder structure:
+        preprocess.py
+        Data
+            Raw
+                Still
+                Walking
+                Running
+            Test
+                Still
+                Walking
+                Running
+            Train
+                Still
+                Walking
+                Running
+    '''
+    raw_path = os.path.join(base_path, "Raw")
+    train_path = os.path.join(base_path, "Train")
+    test_path = os.path.join(base_path, "Test")
 
-def preprocess_folder(input_folder, output_folder, window_size=5):
-    os.makedirs(output_folder, exist_ok=True)
+    for class_folder in os.listdir(raw_path):
+        class_folder_path = os.path.join(raw_path, class_folder)
 
-    for filename in os.listdir(input_folder):
-        input_file_path = os.path.join(input_folder, filename)
-        output_file_path = os.path.join(output_folder, filename)
+        if not os.path.isdir(class_folder_path):
+            continue
 
-        if os.path.isfile(input_file_path):
-            preprocess_accelerometer_data(input_file_path, output_file_path, window_size)
+        files = sorted([
+            f for f in os.listdir(class_folder_path)
+            if os.path.isfile(os.path.join(class_folder_path, f))
+        ])
+
+        split_index = ceil(len(files) * 0.8)
+
+        train_files = files[:split_index]
+        test_files = files[split_index:]
+
+        train_output_dir = os.path.join(train_path, class_folder)
+        test_output_dir = os.path.join(test_path, class_folder)
+        os.makedirs(train_output_dir, exist_ok=True)
+        os.makedirs(test_output_dir, exist_ok=True)
+
+        for f in train_files:
+            input_file = os.path.join(class_folder_path, f)
+            output_file = os.path.join(train_output_dir, f)
+            preprocess_accelerometer_data(input_file, output_file, window_size)
+
+        for f in test_files:
+            input_file = os.path.join(class_folder_path, f)
+            output_file = os.path.join(test_output_dir, f)
+            preprocess_accelerometer_data(input_file, output_file, window_size)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Batch process accelerometer data files.")
-    parser.add_argument("input_folder", help="Path to the folder containing raw data files.")
-    parser.add_argument("output_folder", help="Path to the folder where processed files will be saved.")
-    parser.add_argument("--window_size", type=int, default=5, help="Window size for moving average (default: 5)")
-
-    args = parser.parse_args()
-
-    preprocess_folder(args.input_folder, args.output_folder, args.window_size)
+    process_all_data()
