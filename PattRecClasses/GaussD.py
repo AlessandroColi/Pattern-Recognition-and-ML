@@ -60,7 +60,7 @@ class GaussD:
         pass
 
     def prob(self, values):
-        return scipy.stats.multivariate_normal(mean=self.means, cov=self.cov).pdf(values)
+        return scipy.stats.multivariate_normal(mean=self.means, cov=self.cov, allow_singular=True).pdf(values)
     
     def plotCross(self):
         pass
