@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import pandas as pd
+import random
 from PattRecClasses import MarkovChain, GaussD, HMM
 
 def load_sequences(data_folder):
@@ -20,29 +21,47 @@ def load_sequences(data_folder):
     print(f"Loaded {len(sequences)} sequences from {data_folder}")
     return sequences
 
-def initialize_hmm(activity_data):
-    print("Initializing HMM...")
+def initialize_hmm(n_states, all_train_obs):
+    print("Initializing HMM with random parameters...")
+    # Compute global data statistics for initialization scaling
+    global_min = np.min(all_train_obs, axis=0)
+    global_max = np.max(all_train_obs, axis=0)
+    global_std = np.std(all_train_obs, axis=0)
+    
     distributions = []
-    for idx, state_data in enumerate(activity_data):
-        print(f"  Preparing state {idx+1} with {len(state_data)} sequences")
-        all_obs = np.concatenate(state_data)
-        means = np.mean(all_obs, axis=0)
-        cov = np.cov(all_obs.T)
+    
+    # Initialize Gaussian distributions with random parameters scaled to data range
+    for i in range(n_states):
+        # Random mean within [global_min, global_max]
+        means = global_min + np.random.rand(*global_min.shape) * (global_max - global_min)
+        
+        # Random variances scaled by global std with random factor (0.5-1.5)
+        rand_factor = 0.5 + np.random.rand(*global_std.shape)
+        variances = (global_std * rand_factor) ** 2
+        
+        # Diagonal covariance matrix
+        cov = np.diag(variances)
         distributions.append(GaussD(means=means, cov=cov))
-    n_states = len(activity_data)
-    initial_prob = np.ones(n_states) / n_states
-    trans_prob = np.ones((n_states, n_states)) / n_states
+    
+    # Random initial state probabilities (normalized)
+    initial_prob = np.random.rand(n_states)
+    initial_prob /= np.sum(initial_prob)
+    
+    # Random transition matrix (rows normalized to sum to 1)
+    trans_prob = np.random.rand(n_states, n_states)
+    trans_prob /= np.sum(trans_prob, axis=1, keepdims=True)
+    
     mc = MarkovChain(initial_prob, trans_prob)
-    print("HMM initialization done.")
+    print("HMM random initialization done.")
     return HMM(mc, distributions)
 
 def train_hmm(model, train_sequences, n_iter=20):
     print(f"Starting training for {n_iter} iterations on {len(train_sequences)} sequences...")
     for iter_num in range(1, n_iter + 1):
         print(f"Iteration {iter_num}...")
+        # Shuffle training sequences at the start of each epoch
+        random.shuffle(train_sequences)
         for i, seq in enumerate(train_sequences):
-            print(f"seq {i}")
-            
             if len(seq) < 2:
                 print(f"  Skipping too short sequence #{i+1} (length {len(seq)})")
                 continue
@@ -58,10 +77,11 @@ def test_hmm(model, test_sequences, true_labels):
     correct = 0
     total = len(test_sequences)
     for i, (seq, label) in enumerate(zip(test_sequences, true_labels)):
-        print(f"seq {i}")
         try:
             states = model.viterbi(seq)
-            pred = np.bincount(states).argmax()
+            # Convert 1-indexed states to 0-indexed labels
+            state_counts = np.bincount(states, minlength=model.nStates+1)[1:]
+            pred = np.argmax(state_counts)
             if pred == label:
                 correct += 1
             else:
@@ -73,32 +93,36 @@ def test_hmm(model, test_sequences, true_labels):
     return accuracy
 
 def main():
-    activities = ['Still', 'Walking']
+    pure_activities = ['Still', 'Walking', 'Running']
+    mixed_activity = 'Mixed'
     
-    # Load training data
-    train_sequences = []
-    train_labels = []
-    for state_idx, activity in enumerate(activities):
+    # Load pure activity data
+    pure_train_sequences = []
+    for activity in pure_activities:
         activity_dir = os.path.join('Data', 'Train', activity)
-        seqs = load_sequences(activity_dir)
-        train_sequences.extend(seqs)
-        train_labels.extend([state_idx]*len(seqs))
+        pure_train_sequences.extend(load_sequences(activity_dir))
     
-    # Initialize HMM
-    activity_data = []
-    for activity in activities:
-        activity_dir = os.path.join('Data', 'Train', activity)
-        activity_data.append(load_sequences(activity_dir))
+    # Load mixed activity data
+    mixed_dir = os.path.join('Data', 'Train', mixed_activity)
+    mixed_sequences = load_sequences(mixed_dir)
     
-    hmm = initialize_hmm(activity_data)
+    # Combine all training data
+    train_sequences = pure_train_sequences + mixed_sequences
     
-    # Train HMM
+    # Create array of all observations for initialization
+    all_train_obs = np.concatenate(train_sequences)
+    
+    # Initialize HMM with random parameters
+    n_states = len(pure_activities)
+    hmm = initialize_hmm(n_states, all_train_obs)
+    
+    # Train HMM with shuffled sequences
     train_hmm(hmm, train_sequences, n_iter=20)
     
-    # Load test data
+    # Load test data (only pure activities)
     test_sequences = []
     test_labels = []
-    for state_idx, activity in enumerate(activities):
+    for state_idx, activity in enumerate(pure_activities):
         activity_dir = os.path.join('Data', 'Test', activity)
         seqs = load_sequences(activity_dir)
         test_sequences.extend(seqs)

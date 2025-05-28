@@ -34,14 +34,17 @@ def process_all_data(base_path="Data", window_size=5):
                 Still
                 Walking
                 Running
+                Mixed
             Test
                 Still
                 Walking
                 Running
+                Mixed
             Train
                 Still
                 Walking
                 Running
+                Mixed
     '''
     raw_path = os.path.join(base_path, "Raw")
     train_path = os.path.join(base_path, "Train")
