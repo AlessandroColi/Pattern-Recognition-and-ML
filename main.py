@@ -66,6 +66,7 @@ def train_hmm(model, train_sequences, n_iter=20):
                 print(f"  Skipping too short sequence #{i+1} (length {len(seq)})")
                 continue
             try:
+                print(f"\t\t [MAIN] Starting training for seq {i}")
                 seq = np.array(seq)
                 model.train(seq)
             except Exception as e:
@@ -93,7 +94,7 @@ def test_hmm(model, test_sequences, true_labels):
     return accuracy
 
 def main():
-    pure_activities = ['Still', 'Walking', 'Running']
+    pure_activities = ['Still', 'Walking'] #, 'Running']
     mixed_activity = 'Mixed'
     
     # Load pure activity data
