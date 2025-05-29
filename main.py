@@ -56,21 +56,10 @@ def initialize_hmm(n_states, all_train_obs):
     return HMM(mc, distributions)
 
 def train_hmm(model, train_sequences, n_iter=20):
-    print(f"Starting training for {n_iter} iterations on {len(train_sequences)} sequences...")
+    print(f"Starting training for {n_iter} iterations...")
     for iter_num in range(1, n_iter + 1):
         print(f"Iteration {iter_num}...")
-        # Shuffle training sequences at the start of each epoch
-        random.shuffle(train_sequences)
-        for i, seq in enumerate(train_sequences):
-            if len(seq) < 2:
-                print(f"  Skipping too short sequence #{i+1} (length {len(seq)})")
-                continue
-            try:
-                print(f"\t\t [MAIN] Starting training for seq {i}")
-                seq = np.array(seq)
-                model.train(seq)
-            except Exception as e:
-                print(f"  Training error on sequence #{i+1}: {e}")
+        model.train(train_sequences, 1)  # Process ALL sequences in one batch
     print("Training completed.")
 
 def test_hmm(model, test_sequences, true_labels):
@@ -90,7 +79,7 @@ def test_hmm(model, test_sequences, true_labels):
         except Exception as e:
             print(f"  Error decoding sequence #{i+1}: {e}")
     accuracy = correct / total if total > 0 else 0
-    print(f"Testing done. Accuracy: {accuracy*100:.2f}%")
+    print(f"\n\t\t [MAIN] Testing done. Accuracy: {accuracy*100:.2f}%")
     return accuracy
 
 def main():
@@ -118,7 +107,7 @@ def main():
     hmm = initialize_hmm(n_states, all_train_obs)
     
     # Train HMM with shuffled sequences
-    train_hmm(hmm, train_sequences, n_iter=20)
+    train_hmm(hmm, train_sequences, n_iter=10)
     
     # Load test data (only pure activities)
     test_sequences = []

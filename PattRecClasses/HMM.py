@@ -146,61 +146,76 @@ class HMM:
         
         return log_beta
 
-    def train(self, observations, n_iter=10):
+    def train(self, observations_list, n_iter=10):
         for iteration in range(n_iter):
             print(f"[HMM] Training iteration {iteration+1}/{n_iter}")
-            T = len(observations)
-            N = self.nStates
             
-            # Compute log-domain forward and backward probabilities
-            log_alpha = self.log_forward(observations)
-            log_beta = self.log_backward(observations)
-            
-            # Compute total log-likelihood for normalization
-            log_likelihood = self.log_sum_exp(log_alpha[:, T-1])
-            
-            # Compute gamma: P(state=i at time t | observations)
-            log_gamma = log_alpha + log_beta - log_likelihood
-            gamma = np.exp(log_gamma)
-            
-            # Compute xi: P(state=i at t, state=j at t+1 | observations)
-            log_xi = np.zeros((N, N, T-1))
-            for t in range(T-1):
-                for i in range(N):
-                    for j in range(N):
-                        log_xi[i, j, t] = log_alpha[i, t] + \
-                                          np.log(self.stateGen.A[i, j] + 1e-20) + \
-                                          np.log(self.outputDistr[j].prob(observations[t+1]) + 1e-20) + \
-                                          log_beta[j, t+1] - \
-                                          log_likelihood
-            
-            # Convert to probabilities
-            xi = np.exp(log_xi)
-            
-            # Update initial probabilities
-            self.stateGen.q = gamma[:, 0] / np.sum(gamma[:, 0])
-            
-            # Update transition matrix
-            trans_num = np.sum(xi, axis=2)
-            trans_den = np.sum(gamma[:, :-1], axis=1, keepdims=True)
-            self.stateGen.A = trans_num / np.where(trans_den == 0, 1e-10, trans_den)
-            print(f"[HMM] Updated transition matrix at iteration {iteration+1}:\n{self.stateGen.A}")
-            
-            # Update emission parameters
-            for j in range(N):
-                gamma_j = gamma[j, :]
-                total = gamma_j.sum()
-                if total == 0:
-                    print(f"[HMM] Warning: total gamma for state {j} is zero, skipping update")
+            # Initialize accumulators
+            initial_acc = np.zeros(self.nStates)
+            trans_acc = np.zeros((self.nStates, self.nStates))
+            gamma_acc = [np.zeros(self.dataSize) for _ in range(self.nStates)]
+            gamma_count = np.zeros(self.nStates)
+            gamma_xxT_acc = [np.zeros((self.dataSize, self.dataSize)) for _ in range(self.nStates)]
+
+            # Process each sequence to accumulate statistics
+            for observations in observations_list:
+                T = len(observations)
+                if T < 2:
                     continue
 
-                self.outputDistr[j].means = np.sum(observations * gamma_j[:, None], axis=0) / total
+                log_alpha = self.log_forward(observations)
+                log_beta = self.log_backward(observations)
+                log_likelihood = self.log_sum_exp(log_alpha[:, T-1])
+                
+                # Gamma: P(state=i at time t | observations)
+                log_gamma = log_alpha + log_beta - log_likelihood
+                gamma = np.exp(log_gamma)
+                
+                # Xi: P(state=i at t, state=j at t+1 | observations)
+                log_xi = np.zeros((self.nStates, self.nStates, T-1))
+                for t in range(T-1):
+                    for i in range(self.nStates):
+                        for j in range(self.nStates):
+                            log_xi[i, j, t] = (
+                                log_alpha[i, t] +
+                                np.log(self.stateGen.A[i, j] + 1e-20) +
+                                np.log(self.outputDistr[j].prob(observations[t+1]) + 1e-20) +
+                                log_beta[j, t+1] -
+                                log_likelihood
+                            )
+                xi = np.exp(log_xi)
+                
+                # Accumulate statistics
+                initial_acc += gamma[:, 0]
+                trans_acc += np.sum(xi, axis=2)
+                
+                for j in range(self.nStates):
+                    gamma_count[j] += np.sum(gamma[j, :])
+                    gamma_acc[j] += np.sum(observations * gamma[j, :, None], axis=0)
+                    diff = observations - self.outputDistr[j].means
+                    gamma_xxT_acc[j] += np.dot((diff * gamma[j, :, None]).T, diff)
 
-                diff = observations - self.outputDistr[j].means
-                cov = np.dot((diff * gamma_j[:, None]).T, diff) / total
-                self.outputDistr[j].cov = cov
-                self.outputDistr[j].stdevs = np.sqrt(np.diag(cov))
-                self.outputDistr[j].variance = self.outputDistr[j].stdevs ** 2
+            # Update initial probabilities
+            self.stateGen.q = initial_acc / np.sum(initial_acc)
+            
+            # Update transition matrix
+            row_sums = np.sum(trans_acc, axis=1, keepdims=True)
+            self.stateGen.A = trans_acc / np.where(row_sums == 0, 1e-10, row_sums)
+            
+            # Update emission distributions
+            for j in range(self.nStates):
+                if gamma_count[j] > 0:
+                    # Update means
+                    self.outputDistr[j].means = gamma_acc[j] / gamma_count[j]
+                    
+                    # Update covariance (ensure diagonal)
+                    cov = gamma_xxT_acc[j] / gamma_count[j]
+                    if not np.allclose(cov, np.diag(np.diag(cov))):
+                        cov = np.diag(np.diag(cov))
+                    self.outputDistr[j].cov = cov
+                    self.outputDistr[j].stdevs = np.sqrt(np.diag(cov))
+                    self.outputDistr[j].variance = np.diag(cov)
+            print(f"[HMM] Updated transition matrix: \n{self.stateGen.A}")
 
     def viterbi(self, observations):
         print("[HMM] Starting Viterbi decoding")
