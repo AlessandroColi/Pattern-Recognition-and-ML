@@ -215,7 +215,7 @@ class HMM:
                     self.outputDistr[j].cov = cov
                     self.outputDistr[j].stdevs = np.sqrt(np.diag(cov))
                     self.outputDistr[j].variance = np.diag(cov)
-            print(f"[HMM] Updated transition matrix: \n{self.stateGen.A}")
+            print(f"[HMM] Updated transition matrix: \n{self.stateGen.pi}\n {self.stateGen.A}")
 
     def viterbi(self, observations):
         print("[HMM] Starting Viterbi decoding")
