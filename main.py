@@ -28,38 +28,20 @@ def load_sequences(data_folder, file_extension='.txt'):
     print(f"Loaded {len(sequences)} sequences from {data_folder}")
     return sequences, valid_files
 
-def initialize_hmm(n_states, all_train_obs):
-    print("Initializing HMM with random parameters...")
-    # Compute global data statistics for initialization scaling
-    global_min = np.min(all_train_obs, axis=0)
-    global_max = np.max(all_train_obs, axis=0)
-    global_std = np.std(all_train_obs, axis=0)
-    
+def initialize_hmm(activity_data):
+    print("Initializing HMM...")
     distributions = []
-    
-    # Initialize Gaussian distributions with random parameters scaled to data range
-    for i in range(n_states):
-        # Random mean within [global_min, global_max]
-        means = global_min + np.random.rand(*global_min.shape) * (global_max - global_min)
-        
-        # Random variances scaled by global std with random factor (0.5-1.5)
-        rand_factor = 0.5 + np.random.rand(*global_std.shape)
-        variances = (global_std * rand_factor) ** 2
-        
-        # Diagonal covariance matrix
-        cov = np.diag(variances)
+    for idx, state_data in enumerate(activity_data):
+        print(f"  Preparing state {idx+1} with {len(state_data)} sequences")
+        all_obs = np.concatenate(state_data)
+        means = np.mean(all_obs, axis=0)
+        cov = np.cov(all_obs.T)
         distributions.append(GaussD(means=means, cov=cov))
-    
-    # Random initial state probabilities (normalized)
-    initial_prob = np.random.rand(n_states)
-    initial_prob /= np.sum(initial_prob)
-    
-    # Random transition matrix (rows normalized to sum to 1)
-    trans_prob = np.random.rand(n_states, n_states)
-    trans_prob /= np.sum(trans_prob, axis=1, keepdims=True)
-    
+    n_states = len(activity_data)
+    initial_prob = np.ones(n_states) / n_states
+    trans_prob = np.ones((n_states, n_states)) / n_states
     mc = MarkovChain(initial_prob, trans_prob)
-    print("HMM random initialization done.")
+    print("HMM initialization done.")
     return HMM(mc, distributions)
 
 def train_hmm(model, train_sequences, n_iter=20):
@@ -151,28 +133,27 @@ def main():
     pure_activities = ['Still', 'Walking']
     mixed_activity = 'Mixed'
     
-    # Load pure activity data
-    pure_train_sequences = []
+    # Load pure activity training data per activity
+    activity_data = []  # Will hold sequences for each pure activity [ [still_seq1, ...], [walking_seq1, ...] ]
     for activity in pure_activities:
         activity_dir = os.path.join('Data', 'Train', activity)
         seqs, files = load_sequences(activity_dir)
         print(f"  Loaded {len(seqs)} {activity} training files")
-        pure_train_sequences.extend(seqs)
+        activity_data.append(seqs)
     
     # Load mixed activity data
     mixed_dir = os.path.join('Data', 'Train', mixed_activity)
     mixed_sequences, mixed_files = load_sequences(mixed_dir)
     print(f"  Loaded {len(mixed_sequences)} mixed training files")
     
-    # Combine all training data
-    train_sequences = pure_train_sequences + mixed_sequences
+    # Combine all training data (for training, not initialization)
+    train_sequences = []
+    for seq_list in activity_data:
+        train_sequences.extend(seq_list)
+    train_sequences.extend(mixed_sequences)
     
-    # Create array of all observations for initialization
-    all_train_obs = np.concatenate(train_sequences)
-    
-    # Initialize HMM with random parameters
-    n_states = len(pure_activities)
-    hmm = initialize_hmm(n_states, all_train_obs)
+    # Initialize HMM using activity-specific data (only pure activities)
+    hmm = initialize_hmm(activity_data)
     
     # Train HMM
     train_hmm(hmm, train_sequences, n_iter=10)
