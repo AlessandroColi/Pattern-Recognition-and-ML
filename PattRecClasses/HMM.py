@@ -102,62 +102,57 @@ class HMM:
         return X, S
 
     def log_forward(self, observations):
-        """Forward algorithm in log domain for numerical stability"""
+        """Forward algorithm in log domain"""
         T = len(observations)
         N = self.nStates
         log_alpha = np.zeros((N, T))
         
-        # Initialization
-        for i in range(N):
-            log_alpha[i, 0] = np.log(self.stateGen.q[i] + 1e-20) + \
-                              np.log(self.outputDistr[i].prob(observations[0]) + 1e-20)
+        log_emissions = np.log([d.prob(observations[0]) + 1e-20 for d in self.outputDistr])
+        log_alpha[:, 0] = np.log(self.stateGen.q + 1e-20) + log_emissions
         
-        # Recursion
         for t in range(1, T):
             for j in range(N):
-                # Log-sum-exp for numerical stability
                 log_trans = np.log(self.stateGen.A[:, j] + 1e-20) + log_alpha[:, t-1]
                 log_sum = self.log_sum_exp(log_trans)
-                log_alpha[j, t] = log_sum + np.log(self.outputDistr[j].prob(observations[t]) + 1e-20)
+                log_emission = np.log(self.outputDistr[j].prob(observations[t]) + 1e-20)
+                log_alpha[j, t] = log_sum + log_emission
         
         return log_alpha
 
     def log_backward(self, observations):
-        """Backward algorithm in log domain for numerical stability"""
+        """Backward algorithm in log domain"""
         T = len(observations)
         N = self.nStates
         log_beta = np.zeros((N, T))
+        log_beta[:, T-1] = 0.0  
         
-        # Initialize: beta at time T-1 is 1 -> log(1)=0
-        log_beta[:, T-1] = 0.0
-        
-        # Recursion
         for t in range(T-2, -1, -1):
             for i in range(N):
-                # Compute for each next state j
                 log_terms = np.zeros(N)
                 for j in range(N):
-                    log_terms[j] = np.log(self.stateGen.A[i, j] + 1e-20) + \
-                                  np.log(self.outputDistr[j].prob(observations[t+1]) + 1e-20) + \
-                                  log_beta[j, t+1]
-                
-                # Log-sum-exp for numerical stability
+                    log_trans = np.log(self.stateGen.A[i, j] + 1e-20)
+                    log_emission = np.log(self.outputDistr[j].prob(observations[t+1]) + 1e-20)
+                    log_terms[j] = log_trans + log_emission + log_beta[j, t+1]
                 log_beta[i, t] = self.log_sum_exp(log_terms)
         
         return log_beta
 
-    def train(self, observations_list, n_iter=10):
+    def train(self, observations_list, n_iter=1):
+        """
+        Train HMM for n_iter iterations
+        Returns average log-likelihood per sequence
+        """
+        total_sequences = len(observations_list)
+        total_logL = 0.0
+        
         for iteration in range(n_iter):
-            print(f"[HMM] Training iteration {iteration+1}/{n_iter}")
-            
-            # Initialize accumulators
             initial_acc = np.zeros(self.nStates)
             trans_acc = np.zeros((self.nStates, self.nStates))
             gamma_acc = [np.zeros(self.dataSize) for _ in range(self.nStates)]
+            gamma_x2_acc = [np.zeros(self.dataSize) for _ in range(self.nStates)]
             gamma_count = np.zeros(self.nStates)
-            gamma_xxT_acc = [np.zeros((self.dataSize, self.dataSize)) for _ in range(self.nStates)]
-
-            # Process each sequence to accumulate statistics
+            iter_logL = 0.0  
+            
             for observations in observations_list:
                 T = len(observations)
                 if T < 2:
@@ -166,12 +161,11 @@ class HMM:
                 log_alpha = self.log_forward(observations)
                 log_beta = self.log_backward(observations)
                 log_likelihood = self.log_sum_exp(log_alpha[:, T-1])
+                iter_logL += float(log_likelihood) 
                 
-                # Gamma: P(state=i at time t | observations)
                 log_gamma = log_alpha + log_beta - log_likelihood
                 gamma = np.exp(log_gamma)
                 
-                # Xi: P(state=i at t, state=j at t+1 | observations)
                 log_xi = np.zeros((self.nStates, self.nStates, T-1))
                 for t in range(T-1):
                     for i in range(self.nStates):
@@ -185,65 +179,60 @@ class HMM:
                             )
                 xi = np.exp(log_xi)
                 
-                # Accumulate statistics
                 initial_acc += gamma[:, 0]
                 trans_acc += np.sum(xi, axis=2)
                 
                 for j in range(self.nStates):
                     gamma_count[j] += np.sum(gamma[j, :])
                     gamma_acc[j] += np.sum(observations * gamma[j, :, None], axis=0)
-                    diff = observations - self.outputDistr[j].means
-                    gamma_xxT_acc[j] += np.dot((diff * gamma[j, :, None]).T, diff)
+                    gamma_x2_acc[j] += np.sum(observations**2 * gamma[j, :, None], axis=0)
 
-            # Update initial probabilities
             self.stateGen.q = initial_acc / np.sum(initial_acc)
             
-            # Update transition matrix
             row_sums = np.sum(trans_acc, axis=1, keepdims=True)
             self.stateGen.A = trans_acc / np.where(row_sums == 0, 1e-10, row_sums)
+            self.stateGen.A = 0.8 * self.stateGen.A + 0.2 * np.eye(self.nStates)
             
-            # Update emission distributions
             for j in range(self.nStates):
                 if gamma_count[j] > 0:
-                    # Update means
-                    self.outputDistr[j].means = gamma_acc[j] / gamma_count[j]
+                    new_means = gamma_acc[j] / gamma_count[j]
                     
-                    # Update covariance (ensure diagonal)
-                    cov = gamma_xxT_acc[j] / gamma_count[j]
-                    if not np.allclose(cov, np.diag(np.diag(cov))):
-                        cov = np.diag(np.diag(cov))
-                    self.outputDistr[j].cov = cov
-                    self.outputDistr[j].stdevs = np.sqrt(np.diag(cov))
-                    self.outputDistr[j].variance = np.diag(cov)
-            print(f"[HMM] Updated transition matrix: \n{self.stateGen.q} \n {self.stateGen.A}")
+                    new_vars = gamma_x2_acc[j] / gamma_count[j] - new_means**2
+                    new_vars = np.maximum(new_vars, 1e-6)  # Ensure positivity
+                    
+                    self.outputDistr[j].means = new_means
+                    self.outputDistr[j].variance = new_vars
+                    self.outputDistr[j].stdevs = np.sqrt(new_vars)
+                    self.outputDistr[j].cov = np.diag(new_vars)
+            
+            avg_logL = iter_logL / total_sequences if total_sequences > 0 else 0
+            print(f"  Iteration {iteration+1}: Avg logL = {avg_logL:.2f}")
+            
+            total_logL += avg_logL
+        
+        return total_logL / n_iter if n_iter > 0 else 0
 
     def viterbi(self, observations):
-        print("[HMM] Starting Viterbi decoding")
+        """Viterbi decoding with fixed initialization"""
         T = len(observations)
         N = self.nStates
         delta = np.zeros((N, T))
         psi = np.zeros((N, T), dtype=int)
-
-        delta[:, 0] = np.log(self.stateGen.q + 1e-10) + \
-                     np.array([d.prob(observations[0]) for d in self.outputDistr])
-        delta[:, 0] = np.where(delta[:, 0] < -1e20, -1e20, delta[:, 0])
-
+        
+        log_emissions = np.log([d.prob(observations[0]) + 1e-20 for d in self.outputDistr])
+        delta[:, 0] = np.log(self.stateGen.q + 1e-20) + log_emissions
+        
         for t in range(1, T):
             for j in range(N):
-                trans_prob = np.log(self.stateGen.A[:, j] + 1e-10)
+                trans_prob = np.log(self.stateGen.A[:, j] + 1e-20)
                 prev = delta[:, t-1] + trans_prob
                 psi[j, t] = np.argmax(prev)
-                delta[j, t] = prev[psi[j, t]] + np.log(self.outputDistr[j].prob(observations[t]) + 1e-10)
-
+                emission_prob = np.log(self.outputDistr[j].prob(observations[t]) + 1e-20)
+                delta[j, t] = prev[psi[j, t]] + emission_prob
+        
         states = np.zeros(T, dtype=int)
         states[-1] = np.argmax(delta[:, -1])
         for t in range(T-2, -1, -1):
             states[t] = psi[states[t+1], t+1]
-
-        print("[HMM] Viterbi decoding finished")
-        return states + 1  # 1-based states
-
-    def logprob(self, observations):
-        _, c = self.forward(observations)
-        lp = -np.sum(np.log(c))
-        return lp
+            
+        return states + 1 
