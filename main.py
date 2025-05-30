@@ -130,11 +130,11 @@ def test_mixed_sequence(model, mixed_sequence_path, mixed_labels_path):
     return accuracy
 
 def main():
-    pure_activities = ['Still', 'Walking']
+    pure_activities = ['Still', 'Walking', 'Running']
     mixed_activity = 'Mixed'
     
     # Load pure activity training data per activity
-    activity_data = []  # Will hold sequences for each pure activity [ [still_seq1, ...], [walking_seq1, ...] ]
+    activity_data = []  
     for activity in pure_activities:
         activity_dir = os.path.join('Data', 'Train', activity)
         seqs, files = load_sequences(activity_dir)
@@ -156,7 +156,7 @@ def main():
     hmm = initialize_hmm(activity_data)
     
     # Train HMM
-    train_hmm(hmm, train_sequences, n_iter=10)
+    train_hmm(hmm, train_sequences, n_iter=5)
     
     # Load test data for pure activities
     test_sequences = []

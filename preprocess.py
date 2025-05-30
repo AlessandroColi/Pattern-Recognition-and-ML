@@ -5,23 +5,60 @@ from math import ceil
 
 def preprocess_accelerometer_data(input_file, output_file, window_size=5):
     try:
+        # Read raw data with flexible column handling
         df = pd.read_csv(
             input_file,
             delimiter='\t',
             header=None,
-            names=['timestamp', 'type', 'x', 'y', 'z'],
-            on_bad_lines='skip'  # Skip malformed lines
+            on_bad_lines='skip'
         )
     except pd.errors.ParserError as e:
         print(f"Error reading {input_file}: {e}")
         return
 
-    df = df.drop(columns=['type'])
+    if df.empty:
+        print(f"Empty DataFrame after reading {input_file}")
+        return
 
+    n_cols = df.shape[1]
+
+    # Handle different input formats
+    if n_cols == 5:
+        if pd.api.types.is_numeric_dtype(df[1]):
+            # New format: timestamp,x,y,z,abs_acc → keep first 4 columns
+            df = df.iloc[:, :4]
+        else:
+            # Original format: timestamp,type,x,y,z → keep timestamp,x,y,z
+            df = df.iloc[:, [0, 2, 3, 4]]
+        df.columns = ['timestamp', 'x', 'y', 'z']
+    elif n_cols == 4:
+        # Already in target format
+        df.columns = ['timestamp', 'x', 'y', 'z']
+    else:
+        print(f"Unexpected columns ({n_cols}) in {input_file}, skipping")
+        return
+
+    # Convert to numeric and clean data
+    for col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+    df = df.dropna(subset=['timestamp', 'x', 'y', 'z'])
+    
+    if df.empty:
+        print(f"No valid data after cleaning in {input_file}")
+        return
+
+    # Apply smoothing
     for col in ['x', 'y', 'z']:
-        df[col] = df[col].rolling(window=window_size, min_periods=1, center=True).mean().round(3)
+        df[col] = df[col].rolling(
+            window=window_size,
+            min_periods=1,
+            center=True
+        ).mean().round(3)
 
+    # Save processed data
     df.to_csv(output_file, sep='\t', index=False, header=False)
+
+# (Rest of the code remains unchanged below this point)
 
 def create_mixed_test_sequence(test_path, activities, segment_duration=30, sampling_rate=100):
     """
@@ -77,12 +114,10 @@ def create_mixed_test_sequence(test_path, activities, segment_duration=30, sampl
         label_value = activities.index(activity)
         labels.extend([label_value] * len(segment))
     
-    # Save as TXT file instead of CSV
     sequence_path = os.path.join(mixed_dir, "mixed_sequence.txt")
     mixed_sequence.to_csv(sequence_path, sep='\t', index=False, header=False)
     print(f"  Saved mixed sequence to {sequence_path} ({len(mixed_sequence)} samples)")
     
-    # Save labels
     labels_path = os.path.join(mixed_dir, "mixed_sequence_labels.txt")
     np.savetxt(labels_path, labels, fmt='%d')
     print(f"  Saved ground truth labels to {labels_path}")
